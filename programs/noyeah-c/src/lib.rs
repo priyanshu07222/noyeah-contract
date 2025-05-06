@@ -1,9 +1,11 @@
-use anchor_lang::{prelude::*, solana_program::clock::UnixTimestamp};
+use anchor_lang::prelude::*;
 
 declare_id!("2S2ztAYPLzQN3McM2jJqNhoycahBMpyEc1tvNLBdR2qv");
 
 #[program]
 pub mod noyeah_c {
+    use anchor_lang::solana_program::{program::invoke, system_instruction};
+
     use super::*;
 
     pub fn create_contest(
@@ -13,15 +15,14 @@ pub mod noyeah_c {
         entry_fee: u64,
     ) -> Result<()> {
         let create_contest = &mut ctx.accounts.create_contest;
-        let time = Clock::get()?.unix_timestamp;
         create_contest.creator = *ctx.accounts.signer.key;
         create_contest.title = title;
-        create_contest.base_entry_price = entry_fee;
-        create_contest.start_time = time;
+        create_contest.yes_entry_price = entry_fee;
+        create_contest.no_entry_price = entry_fee;
+        create_contest.start_time = Clock::get()?.unix_timestamp;
         create_contest.end_time = end_time;
         create_contest.option_yes_pool = 0;
         create_contest.option_no_pool = 0;
-        create_contest.total_pool = 0;
         create_contest.yes_participants = 0;
         create_contest.no_participants = 0;
         create_contest.status = ContestStatus::Open;
@@ -30,9 +31,8 @@ pub mod noyeah_c {
 
     pub fn participate_contest(
         ctx: Context<ParticipateContest>,
-        contest: Pubkey,
         amount: u64,
-        bidOption: OptionType,
+        bid_option: OptionType,
     ) -> Result<()> {
         let contest_acc = &mut ctx.accounts.contest_account;
         let participant_acc = &mut ctx.accounts.participant_account;
@@ -44,20 +44,59 @@ pub mod noyeah_c {
             ErrorCode::ContestClosed
         );
         require!(time < contest_acc.end_time, ErrorCode::ContestClosed);
-        require!(
-            amount >= contest_acc.base_entry_price,
-            ErrorCode::InsufficiantBidAmount
-        );
 
-        // a function to calculate price
+        match bid_option {
+            OptionType::Yes => {
+                require!(
+                    amount >= contest_acc.yes_entry_price,
+                    ErrorCode::InsufficiantBidAmount
+                );
+                contest_acc.yes_participants += 1;
+                contest_acc.option_yes_pool += amount;
+                participant_acc.price_at_bid = contest_acc.yes_entry_price;
+            }
+            OptionType::No => {
+                require!(
+                    amount >= contest_acc.no_entry_price,
+                    ErrorCode::InsufficiantBidAmount
+                );
+                contest_acc.no_participants += 1;
+                contest_acc.option_no_pool += amount;
+                participant_acc.price_at_bid = contest_acc.no_entry_price;
+            }
+        }
+
+        participant_acc.participant = *ctx.accounts.payer.key;
+        participant_acc.contest = contest_acc.key();
+        participant_acc.is_winner = false;
+        participant_acc.amount = amount;
+        participant_acc.option = bid_option.clone();
+        // this should change because price is changing
+
+        invoke(
+            &system_instruction::transfer(
+                &ctx.accounts.payer.key(),
+                &ctx.accounts.contest_vault.key(),
+                amount,
+            ),
+            &[
+                ctx.accounts.payer.to_account_info(),
+                ctx.accounts.contest_vault.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
+        )?;
+
+        let new_price = calculate_dynamic_price(&contest_acc, bid_option.clone());
+
+        match bid_option {
+            OptionType::Yes => contest_acc.yes_entry_price = new_price,
+            OptionType::No => contest_acc.no_entry_price = new_price,
+        }
+
+        // a function to calculate price -> done
         // then tranfer the money to the vault
         // change the state of the participant
         // change the betting amount of yes and no
-
-        if contest_acc.status != ContestStatus::Open {
-            return Err(ErrorCode::ContestClosed.into());
-        }
-
         Ok(())
     }
 }
@@ -127,10 +166,10 @@ pub struct CreateContestState {
     pub title: String,
     pub start_time: i64,
     pub end_time: i64,
-    pub base_entry_price: u64, // start_entry fee then it change dynamically
+    pub yes_entry_price: u64,
+    pub no_entry_price: u64,
     pub option_yes_pool: u64,
     pub option_no_pool: u64,
-    pub total_pool: u64, // can be removed, we will able to find this by yes + no pool
     pub yes_participants: u64,
     pub no_participants: u64,
     pub status: ContestStatus,
@@ -175,4 +214,16 @@ pub enum ErrorCode {
     ContestClosed,
     #[msg("Insufficient bid amount, amount should be greater than or equal to Bid amount")]
     InsufficiantBidAmount,
+}
+
+pub fn calculate_dynamic_price(contest: &Account<CreateContestState>, option: OptionType) -> u64 {
+    let total_pool = contest.option_yes_pool + contest.option_no_pool;
+    match option {
+        OptionType::Yes => {
+            contest.yes_entry_price * (1 + (contest.option_yes_pool as u64 / total_pool.max(1)))
+        }
+        OptionType::No => {
+            contest.no_entry_price * (1 + (contest.option_no_pool as u64 / total_pool.max(1)))
+        }
+    }
 }
