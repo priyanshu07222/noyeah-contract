@@ -4,7 +4,7 @@ declare_id!("2S2ztAYPLzQN3McM2jJqNhoycahBMpyEc1tvNLBdR2qv");
 
 #[program]
 pub mod noyeah_c {
-    use anchor_lang::{solana_program::{program::invoke, system_instruction}};
+    use anchor_lang::solana_program::{program::{invoke, invoke_signed}, system_instruction};
 
     use super::*;
 
@@ -26,6 +26,8 @@ pub mod noyeah_c {
         create_contest.yes_participants = 0;
         create_contest.no_participants = 0;
         create_contest.status = ContestStatus::Open;
+        create_contest.winner_count = 0;
+        create_contest.total_pool = 0;
         
         Ok(())
     }
@@ -54,6 +56,7 @@ pub mod noyeah_c {
                 );
                 contest_acc.yes_participants += 1;
                 contest_acc.option_yes_pool += amount;
+                contest_acc.total_pool += amount;
                 participant_acc.price_at_bid = contest_acc.yes_entry_price;
             }
             OptionType::No => {
@@ -63,6 +66,7 @@ pub mod noyeah_c {
                 );
                 contest_acc.no_participants += 1;
                 contest_acc.option_no_pool += amount;
+                contest_acc.total_pool += amount;
                 participant_acc.price_at_bid = contest_acc.no_entry_price;
             }
         }
@@ -72,6 +76,7 @@ pub mod noyeah_c {
         participant_acc.is_winner = false;
         participant_acc.amount = amount;
         participant_acc.option = bid_option.clone();
+        participant_acc.has_claimed = false;
         // this should change because price is changing
         
 
@@ -107,53 +112,77 @@ pub mod noyeah_c {
         require!(Clock::get()?.unix_timestamp > ctx.accounts.contest.end_time, ErrorCode::ContestNotEnded);
         require!(ctx.accounts.contest.status == ContestStatus::Open, ErrorCode::AlreadyResolved);
         let contest = &mut ctx.accounts.contest;
-        contest.correct_answer = answer;
+        contest.correct_answer = answer.clone();
         contest.status = ContestStatus::Resolved;
+        match answer {
+            OptionType::Yes => {
+                contest.winner_count = contest.yes_participants;
+                },
+            OptionType::No => {
+                contest.winner_count = contest.no_participants;
+            }
+        }
         Ok(())
     }
 
-    // pub fn finalize_contest(
-    //     ctx: Context<FinalizeContest>,
-    //     correct_option: OptionType,
-    // ) -> Result<()> {
-    //     let contest = &mut ctx.accounts.contest_account;
-    //     let participant = &mut ctx.accounts.participant;
-    //     require!(
-    //         contest.status == ContestStatus::Open,
-    //         ErrorCode::ContestClosed
-    //     );
-    //     require!(
-    //         Clock::get()?.unix_timestamp > contest.end_time,
-    //         ErrorCode::ContestNotEnded
-    //     );
+    pub fn finalize_contest(
+        ctx: Context<FinalizeContest>,
+    ) -> Result<()> {
+        let contest = &mut ctx.accounts.contest_account.clone();
+        let participant = &mut ctx.accounts.participant;
+        require!(
+            contest.status == ContestStatus::Resolved,
+            ErrorCode::ContestNotResolvedYet
+        );
+        require!(
+            Clock::get()?.unix_timestamp > contest.end_time,
+            ErrorCode::ContestNotEnded
+        );
+        require!(participant.has_claimed == false, ErrorCode::AlreadyClaimed);
+        require!(contest.winner_count > 0 , ErrorCode::WinnerCountShouldBeGreaterThanZero);
+        // make sure winner don't call this again and again
 
-    //     contest.status = ContestStatus::Closed;
+        if participant.option == contest.correct_answer {
+            participant.is_winner = true;
 
-    //     // Determine if the participant is a winner
-    //     if participant.option == correct_option {
-    //         participant.is_winner = true;
+            // Calculate reward
+            let reward =
+                (participant.amount * contest.total_pool) / (participant.price_at_bid * contest.winner_count);
+            
+            let (_contest_vault_pda, bump) = Pubkey::find_program_address(
+                        &[b"vault", ctx.accounts.contest_account.key().as_ref()],
+                        ctx.program_id,
+                    );
+            
+            let vpubkey = ctx.accounts.contest_account.key();
+            
+            let seeds: &[&[&[u8]]] = &[&[b"vault", vpubkey.as_ref(), &[bump]]];
 
-    //         // Calculate reward
-    //         let reward =
-    //             participant.amount * contest.option_yes_pool.max(1) / contest.option_no_pool.max(1);
+            // Transfer reward
+            // invoke_sign
+            invoke_signed(
+                &system_instruction::transfer(
+                    &ctx.accounts.contest_vault.key(),
+                    &ctx.accounts.payer.key(),
+                    reward,
+                ),
+                &[
+                    ctx.accounts.contest_vault.to_account_info(),
+                    ctx.accounts.payer.to_account_info(),
+                    ctx.accounts.system_program.to_account_info(),
+                ],
+                seeds
+            )?;
+            
+            if contest.winner_count == 1 {
+                contest.status = ContestStatus::Closed;
+            }
+            contest.winner_count -= 1;
+            contest.total_pool -= reward;
+        }
 
-    //         // Transfer reward
-    //         invoke(
-    //             &system_instruction::transfer(
-    //                 &ctx.accounts.contest_vault.key(),
-    //                 &ctx.accounts.payer.key(),
-    //                 reward,
-    //             ),
-    //             &[
-    //                 ctx.accounts.contest_vault.to_account_info(),
-    //                 ctx.accounts.payer.to_account_info(),
-    //                 ctx.accounts.system_program.to_account_info(),
-    //             ],
-    //         )?;
-    //     }
-
-    //     Ok(())
-    // }
+        Ok(())
+    }
 }
 
 #[derive(Accounts)]
@@ -207,19 +236,19 @@ pub struct Resolve<'info>{
     pub contest: Account<'info, CreateContestState>
 }
 
-// #[derive(Accounts)]
-// pub struct FinalizeContest<'info> {
-//     #[account(mut)]
-//     pub payer: Signer<'info>,
-//     #[account(mut)]
-//     pub contest_account: Account<'info, CreateContestState>,
-//     #[account(mut)]
-//     pub participant: Account<'info, ParticipantState>,
-//     /// CHECK: PDA for storing SOL
-//     #[account(mut)]
-//     pub contest_vault: UncheckedAccount<'info>,
-//     pub system_program: Program<'info, System>,
-// }
+#[derive(Accounts)]
+pub struct FinalizeContest<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(mut)]
+    pub contest_account: Account<'info, CreateContestState>,
+    #[account(mut)]
+    pub participant: Account<'info, ParticipantState>,
+    /// CHECK: PDA for storing SOL
+    #[account(mut)]
+    pub contest_vault: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
+}
 
 #[account]
 #[derive(InitSpace)]
@@ -233,10 +262,12 @@ pub struct CreateContestState {
     pub no_entry_price: u64,
     pub option_yes_pool: u64,
     pub option_no_pool: u64,
+    pub total_pool: u64,
     pub yes_participants: u64,
     pub no_participants: u64,
     pub correct_answer: OptionType,
     pub status: ContestStatus,
+    pub winner_count: u64,
     pub bump: u8
 }
 
@@ -249,6 +280,7 @@ pub struct ParticipantState {
     pub amount: u64,
     pub price_at_bid: u64,
     pub is_winner: bool,
+    pub has_claimed: bool,
     pub bump: u8,
 }
 
@@ -284,17 +316,22 @@ pub enum ErrorCode {
     #[msg("Only creator can call this instruction")]
     OnlyCreatorCanCallThis,
     #[msg("Already resolved")]
-    AlreadyResolved
+    AlreadyResolved,
+    #[msg("Contest not resolved yet")]
+    ContestNotResolvedYet,
+    #[msg("Already Claimed")]
+    AlreadyClaimed,
+    #[msg("Winner count should be greater than 0")]
+    WinnerCountShouldBeGreaterThanZero
 }
 
 pub fn calculate_dynamic_price(contest: &Account<CreateContestState>, option: OptionType) -> u64 {
-    let total_pool = contest.option_yes_pool + contest.option_no_pool;
     match option {
         OptionType::Yes => {
-            contest.yes_entry_price * (1 + (contest.option_yes_pool as u64 / total_pool.max(1)))
+            contest.yes_entry_price * (1 + (contest.option_yes_pool as u64 / contest.total_pool.max(1)))
         }
         OptionType::No => {
-            contest.no_entry_price * (1 + (contest.option_no_pool as u64 / total_pool.max(1)))
+            contest.no_entry_price * (1 + (contest.option_no_pool as u64 / contest.total_pool.max(1)))
         }
     }
 }
