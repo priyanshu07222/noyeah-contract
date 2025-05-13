@@ -1,10 +1,10 @@
-use anchor_lang::prelude::*;
+use anchor_lang::{prelude::*};
 
 declare_id!("2S2ztAYPLzQN3McM2jJqNhoycahBMpyEc1tvNLBdR2qv");
 
 #[program]
 pub mod noyeah_c {
-    use anchor_lang::solana_program::{program::invoke, system_instruction};
+    use anchor_lang::{solana_program::{program::invoke, system_instruction}};
 
     use super::*;
 
@@ -26,6 +26,7 @@ pub mod noyeah_c {
         create_contest.yes_participants = 0;
         create_contest.no_participants = 0;
         create_contest.status = ContestStatus::Open;
+        
         Ok(())
     }
 
@@ -44,7 +45,7 @@ pub mod noyeah_c {
             ErrorCode::ContestClosed
         );
         require!(time < contest_acc.end_time, ErrorCode::ContestClosed);
-
+        
         match bid_option {
             OptionType::Yes => {
                 require!(
@@ -72,6 +73,7 @@ pub mod noyeah_c {
         participant_acc.amount = amount;
         participant_acc.option = bid_option.clone();
         // this should change because price is changing
+        
 
         invoke(
             &system_instruction::transfer(
@@ -99,6 +101,59 @@ pub mod noyeah_c {
         // change the betting amount of yes and no
         Ok(())
     }
+    
+    pub fn resolve_contest(ctx: Context<Resolve>, answer: OptionType) -> Result<()>{
+        require!(*ctx.accounts.payer.owner == ctx.accounts.contest.creator, ErrorCode::OnlyCreatorCanCallThis);
+        require!(Clock::get()?.unix_timestamp > ctx.accounts.contest.end_time, ErrorCode::ContestNotEnded);
+        require!(ctx.accounts.contest.status == ContestStatus::Open, ErrorCode::AlreadyResolved);
+        let contest = &mut ctx.accounts.contest;
+        contest.correct_answer = answer;
+        contest.status = ContestStatus::Resolved;
+        Ok(())
+    }
+
+    // pub fn finalize_contest(
+    //     ctx: Context<FinalizeContest>,
+    //     correct_option: OptionType,
+    // ) -> Result<()> {
+    //     let contest = &mut ctx.accounts.contest_account;
+    //     let participant = &mut ctx.accounts.participant;
+    //     require!(
+    //         contest.status == ContestStatus::Open,
+    //         ErrorCode::ContestClosed
+    //     );
+    //     require!(
+    //         Clock::get()?.unix_timestamp > contest.end_time,
+    //         ErrorCode::ContestNotEnded
+    //     );
+
+    //     contest.status = ContestStatus::Closed;
+
+    //     // Determine if the participant is a winner
+    //     if participant.option == correct_option {
+    //         participant.is_winner = true;
+
+    //         // Calculate reward
+    //         let reward =
+    //             participant.amount * contest.option_yes_pool.max(1) / contest.option_no_pool.max(1);
+
+    //         // Transfer reward
+    //         invoke(
+    //             &system_instruction::transfer(
+    //                 &ctx.accounts.contest_vault.key(),
+    //                 &ctx.accounts.payer.key(),
+    //                 reward,
+    //             ),
+    //             &[
+    //                 ctx.accounts.contest_vault.to_account_info(),
+    //                 ctx.accounts.payer.to_account_info(),
+    //                 ctx.accounts.system_program.to_account_info(),
+    //             ],
+    //         )?;
+    //     }
+
+    //     Ok(())
+    // }
 }
 
 #[derive(Accounts)]
@@ -124,7 +179,7 @@ pub struct CreateContest<'info> {
 }
 
 #[derive(Accounts)]
-#[instruction(title:String)]
+// #[instruction(title:String)]
 pub struct ParticipateContest<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
@@ -132,7 +187,7 @@ pub struct ParticipateContest<'info> {
         init,
         payer = payer,
         space= 8 + ParticipantState::INIT_SPACE,
-        seeds=[b"bid", payer.key.as_ref(), contest_account.key().as_ref()],
+        seeds=[b"bid", payer.key().as_ref(), contest_account.key().as_ref()],
         bump
     )]
     pub participant_account: Account<'info, ParticipantState>,
@@ -145,24 +200,32 @@ pub struct ParticipateContest<'info> {
 }
 
 #[derive(Accounts)]
-pub struct FinalizeContest<'info> {
+pub struct Resolve<'info>{
     #[account(mut)]
     pub payer: Signer<'info>,
     #[account(mut)]
-    pub contest_account: Account<'info, CreateContestState>,
-    #[account(mut)]
-    pub participant: Account<'info, ParticipantState>,
-    /// CHECK: PDA for storing SOL
-    #[account(mut)]
-    pub contest_vault: UncheckedAccount<'info>,
-    pub system_program: Program<'info, System>,
+    pub contest: Account<'info, CreateContestState>
 }
+
+// #[derive(Accounts)]
+// pub struct FinalizeContest<'info> {
+//     #[account(mut)]
+//     pub payer: Signer<'info>,
+//     #[account(mut)]
+//     pub contest_account: Account<'info, CreateContestState>,
+//     #[account(mut)]
+//     pub participant: Account<'info, ParticipantState>,
+//     /// CHECK: PDA for storing SOL
+//     #[account(mut)]
+//     pub contest_vault: UncheckedAccount<'info>,
+//     pub system_program: Program<'info, System>,
+// }
 
 #[account]
 #[derive(InitSpace)]
 pub struct CreateContestState {
     pub creator: Pubkey,
-    #[max_len(200)]
+    #[max_len(80)]
     pub title: String,
     pub start_time: i64,
     pub end_time: i64,
@@ -172,8 +235,9 @@ pub struct CreateContestState {
     pub option_no_pool: u64,
     pub yes_participants: u64,
     pub no_participants: u64,
+    pub correct_answer: OptionType,
     pub status: ContestStatus,
-    // should i store bump??
+    pub bump: u8
 }
 
 #[account]
@@ -185,13 +249,14 @@ pub struct ParticipantState {
     pub amount: u64,
     pub price_at_bid: u64,
     pub is_winner: bool,
-    // should i store bump
+    pub bump: u8,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq)]
 pub enum ContestStatus {
     Open,
     Closed,
+    Resolved
 }
 
 impl Space for ContestStatus {
@@ -214,6 +279,12 @@ pub enum ErrorCode {
     ContestClosed,
     #[msg("Insufficient bid amount, amount should be greater than or equal to Bid amount")]
     InsufficiantBidAmount,
+    #[msg("The contest has not yet ended.")]
+    ContestNotEnded,
+    #[msg("Only creator can call this instruction")]
+    OnlyCreatorCanCallThis,
+    #[msg("Already resolved")]
+    AlreadyResolved
 }
 
 pub fn calculate_dynamic_price(contest: &Account<CreateContestState>, option: OptionType) -> u64 {
