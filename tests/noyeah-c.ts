@@ -18,13 +18,13 @@ describe("no-yeah_c", () => {
   let entryFee;
   let endTime;
   
+  creatorKeypair = new Keypair()
   beforeEach(async()=>{
     console.log("before each start")
-    creatorKeypair = new Keypair()
     participantKeypair = anchor.web3.Keypair.generate()
     contestTitle = "Check this"
     entryFee = new anchor.BN(1_000_000);
-    endTime = new anchor.BN(1846657334);
+    endTime = new anchor.BN(1847208378);
     console.log("is before each reach here");
     console.log(program.programId, "yeshh");
     console.log(contestTitle);
@@ -46,7 +46,7 @@ describe("no-yeah_c", () => {
   })
   
   it("create-contest", async() => {
-    console.log("reached here");
+    console.log("reached here", creatorKeypair.publicKey.toBase58());
     const transactionSig = await program.methods
       .createContest(contestTitle, endTime, entryFee)
       .accounts({
@@ -73,45 +73,9 @@ describe("no-yeah_c", () => {
     assert.equal(contestAccount.noEntryPrice.toNumber(), entryFee);
   })
   
-  // it("hello", async () => {
-  //   console.log("delhi")
-  //     const [participantPda] = await anchor.web3.PublicKey.
-  //       findProgramAddress(
-  //         [Buffer.from("bid"), 
-  //           creatorKeypair.publicKey.toBuffer(), 
-  //           contestPda.toBuffer()
-  //           ],
-  //         program.programId
-  //       )
-  //     console.log("meow")
-  //   console.log(participantKeypair.publicKey);
-  //   await provider.connection.requestAirdrop(participantKeypair.publicKey, 2 * LAMPORTS_PER_SOL);
-  //   setTimeout(()=> {console.log("wait 1 min")}, 1000)
-  //   const crebal = await provider.connection.getBalance(participantKeypair.publicKey);
-    
-  //   console.log(crebal)
-  //   const hellosig = await program.methods.hello().
-  //     accounts({
-  //       payer: creatorKeypair.publicKey,
-  //       participantAccount: participantPda,
-  //       contestAccount: contestPda,
-  //       contestVault: contestVaultPda,
-  //       systemProgram: anchor.web3.SystemProgram.programId
-  //     }).signers([creatorKeypair]).rpc()
-  // })
   
   it("participate in contest", async () => {
-    // const transactionSig = await program.methods
-    //   .createContest(contestTitle, endTime, entryFee)
-    //   .accounts({
-    //     signer: creatorKeypair.publicKey,
-    //     createContest: contestPda,
-    //     contestVaultAccount: contestVaultPda,
-    //     systemProgram: anchor.web3.SystemProgram.programId
-    //   })
-    //   .signers([creatorKeypair])
-    //   .rpc()
-    console.log("delhi")
+    console.log("delhi", creatorKeypair.publicKey.toBase58())
     const [participantPda] = await anchor.web3.PublicKey.
       findProgramAddress(
         [Buffer.from("bid"), 
@@ -166,5 +130,24 @@ describe("no-yeah_c", () => {
   
   console.log(participantAccount.isWinner, participantAccount.contest.toBase58(), participantAccount.amount, participantAccount.participant, participantAccount.option)
   console.log(await provider.connection.getBalance(contestVaultPda), "hello")
+  })
+  
+  it("resolve contest", async() =>{
+    const contestAccount1 = await program.account.createContestState.fetch(contestPda);
+    console.log("inside resolve", creatorKeypair.publicKey.toBase58(), contestAccount1.creator.toBase58())
+    const resolveTxn = await program.methods
+      .resolveContest({yes: {}})
+      .accounts({
+        payer: creatorKeypair.publicKey,
+        contest: contestPda
+      })
+      .signers([creatorKeypair])
+      .rpc()
+    
+    const contestAccount = await program.account.createContestState.fetch(contestPda);
+    console.log("lets see what it's printing", contestAccount.status, contestAccount.correctAnswer, contestAccount.winnerCount.toNumber());
+    
+    assert.deepEqual(contestAccount.status, { resolved: {} });
+    assert.deepEqual(contestAccount.correctAnswer, { yes: {} });
   })
 })

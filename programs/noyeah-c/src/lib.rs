@@ -108,8 +108,11 @@ pub mod noyeah_c {
     }
     
     pub fn resolve_contest(ctx: Context<Resolve>, answer: OptionType) -> Result<()>{
-        require!(*ctx.accounts.payer.owner == ctx.accounts.contest.creator, ErrorCode::OnlyCreatorCanCallThis);
-        require!(Clock::get()?.unix_timestamp > ctx.accounts.contest.end_time, ErrorCode::ContestNotEnded);
+        msg!("inside resolve");
+        msg!("{}",ctx.accounts.payer.key());
+        msg!("{}", ctx.accounts.contest.creator);
+        require!(ctx.accounts.payer.key() == ctx.accounts.contest.creator, ErrorCode::OnlyCreatorCanCallThis);
+        // require!(Clock::get()?.unix_timestamp > ctx.accounts.contest.end_time, ErrorCode::ContestNotEnded);
         require!(ctx.accounts.contest.status == ContestStatus::Open, ErrorCode::AlreadyResolved);
         let contest = &mut ctx.accounts.contest;
         contest.correct_answer = answer.clone();
@@ -179,6 +182,7 @@ pub mod noyeah_c {
             }
             contest.winner_count -= 1;
             contest.total_pool -= reward;
+            participant.has_claimed = true;
         }
 
         Ok(())
