@@ -4,6 +4,11 @@ A decentralized prediction market dApp built on the Solana blockchain. Users can
 
 ---
 
+# 📍Deployed On Devnet
+2S2ztAYPLzQN3McM2jJqNhoycahBMpyEc1tvNLBdR2qv
+
+Signature: 5Z4maZyXe8EC8o878PPgUNagA7o8Co2PPM3aRmP1QYu5P7HyZfefpjkuHF5NjLiBAYmsvHGx7eMpoNau5VL2Ksvz
+
 ## 🚀 Features
 
 - 📈 Bonding curve pricing (dynamic price based on total participation)
