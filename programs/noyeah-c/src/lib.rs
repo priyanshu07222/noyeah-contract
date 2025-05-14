@@ -77,7 +77,6 @@ pub mod noyeah_c {
         participant_acc.amount = amount;
         participant_acc.option = bid_option.clone();
         participant_acc.has_claimed = false;
-        // this should change because price is changing
         
 
         invoke(
@@ -108,11 +107,11 @@ pub mod noyeah_c {
     }
     
     pub fn resolve_contest(ctx: Context<Resolve>, answer: OptionType) -> Result<()>{
-        msg!("inside resolve");
-        msg!("{}",ctx.accounts.payer.key());
-        msg!("{}", ctx.accounts.contest.creator);
+        // msg!("inside resolve");
+        // msg!("{}",ctx.accounts.payer.key());
+        // msg!("{}", ctx.accounts.contest.creator);
         require!(ctx.accounts.payer.key() == ctx.accounts.contest.creator, ErrorCode::OnlyCreatorCanCallThis);
-        // require!(Clock::get()?.unix_timestamp > ctx.accounts.contest.end_time, ErrorCode::ContestNotEnded);
+        require!(Clock::get()?.unix_timestamp > ctx.accounts.contest.end_time, ErrorCode::ContestNotEnded);
         require!(ctx.accounts.contest.status == ContestStatus::Open, ErrorCode::AlreadyResolved);
         let contest = &mut ctx.accounts.contest;
         contest.correct_answer = answer.clone();
@@ -161,8 +160,6 @@ pub mod noyeah_c {
             
             let seeds: &[&[&[u8]]] = &[&[b"vault", vpubkey.as_ref(), &[bump]]];
 
-            // Transfer reward
-            // invoke_sign
             invoke_signed(
                 &system_instruction::transfer(
                     &ctx.accounts.contest_vault.key(),
@@ -177,12 +174,12 @@ pub mod noyeah_c {
                 seeds
             )?;
             
-            if contest.winner_count == 1 {
-                contest.status = ContestStatus::Closed;
-            }
-            contest.winner_count -= 1;
+            contest.winner_count = contest.winner_count - 1;
             contest.total_pool -= reward;
             participant.has_claimed = true;
+            if contest.winner_count < 2 {
+                contest.status = ContestStatus::Closed;
+            }
         }
 
         Ok(())
